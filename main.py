@@ -2,8 +2,8 @@ import os
 import logging
 import asyncio
 import nest_asyncio
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters
-from tg_bot import start, addplayer, add_score, message_handler, cancel
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, CallbackQueryHandler
+from tg_bot import start, add_score, button_handler
 from database import connect_db
 
 # Apply nest_asyncio to allow nested event loops if necessary
@@ -25,12 +25,21 @@ async def main():
     # Create the Application and pass it your bot's token
     application = ApplicationBuilder().token(telegram_token).build()
 
+    # Set commands that will show up in the "Menu" button
+    await application.bot.set_my_commands([
+        ("start", "Start the bot and view options"),
+        ("addplayer", "Add a player (admin only)"),
+        ("addscore", "Add a match score"),
+        ("ranking", "Request the raking"),
+    ])
+
     # Register command handlers
     application.add_handler(CommandHandler('start', start))
-    application.add_handler(CommandHandler('addplayer', addplayer))
-    application.add_handler(CommandHandler('addscore', add_score))  # Handler for Add Score button
-    application.add_handler(CommandHandler('cancel', cancel))  # Handler for canceling operations
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))  # Handles text input like player names and scores
+    # application.add_handler(CommandHandler('addplayer', add_player))
+    application.add_handler(CommandHandler('addscore', add_score))
+    # application.add_handler(CommandHandler('ranking', ranking))
+    # Handles inline button presses
+    application.add_handler(CallbackQueryHandler(button_handler))
 
     # Start the bot and keep polling for messages
     await application.run_polling()

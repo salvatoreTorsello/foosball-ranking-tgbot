@@ -3,25 +3,10 @@ version: '3.8'
 services:
   bot:
     build: .
+    container_name: foosball_bot
     environment:
-      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      - DATABASE_PATH=${DATABASE_PATH}
       - TELEGRAM_TOKEN=${TELEGRAM_TOKEN}
-    depends_on:
-      - db
     volumes:
-      - .:/app
-
-  db:
-    image: postgres:latest
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
-    ports:
-      - "5432:5432"
-    volumes:
-      - db_data:/var/lib/postgresql/data
-
-volumes:
-  db_data:
-
+      - ./foosball.db:/app/foosball.db  # Persist SQLite database to the host machine
+    restart: unless-stopped

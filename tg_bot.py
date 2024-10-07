@@ -1,219 +1,223 @@
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import CallbackContext
-from database import add_player_to_db  # Import the function to add players to the database
+import database as db
 
 # Configure logging
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-start_message = ('Welcome to the Foosball Bot!\n'
-    'Use the /addplayer command to add a player (admin only).\n'
-    'Use the /addscore command to add a match score.\n'
-    'Use the /ranking command to request the foosball ranking.')
-
-# Sample list of players for demonstration
-players_all = ["Player 1", "Player 2", "Player 3", "Player 4", "Player 5", "Player 6"]
-
-def create_keyboard_with_two_columns(players, callback_prefix):
-    keyboard = []
-    row = []
-
-    # Iterate over players, placing two buttons per row
-    for i, player in enumerate(players):
-        # Prepare callback data for each player using the provided prefix
-        callback_data = f"{callback_prefix}:{player}"
-
-        # Add the player button to the row
-        row.append(InlineKeyboardButton(player, callback_data=callback_data))
-
-        # Check if the row has two buttons or if it's the last player in case of an odd number of players
-        if len(row) == 2 or i == len(players) - 1:
-            keyboard.append(row)
-            row = []  # Start a new row
-
-    # Add the "Cancel" button in its own row
-    keyboard.append([InlineKeyboardButton("Cancel", callback_data="cancel")])
-
-    return InlineKeyboardMarkup(keyboard)
+players = {"test1", "test2", "test3", "test4"}
 
 # Start command handler that shows the available options
 async def start(update: Update, context: CallbackContext):
+    start_message = (
+        'Welcome to the Foosball Bot!\n'
+        'Use the /addplayer command to add a player (admin only).\n'
+        'Use the /addscore command to add a match score.\n'
+        'Use the /ranking command to request the foosball ranking.\n'
+        'Use the /listplayers command to view all players.'
+    )
     await update.message.reply_text(start_message)
 
-# Function to handle adding a score
+# States for Player and Score functionality
+FIRST_NAME, LAST_NAME, NICKNAME, CONFIRMATION, PLAYER1, PLAYER2, PLAYER3, PLAYER4, TEAM1_SCORE, TEAM2_SCORE = range(10)
+
+# Inline keyboard for cancel button
+def get_cancel_button():
+    keyboard = [[InlineKeyboardButton("Cancel", callback_data='cancel')]]
+    return InlineKeyboardMarkup(keyboard)
+
+# Inline keyboard for confirmation and cancel buttons
+def get_confirmation_buttons():
+    keyboard = [
+        [
+            InlineKeyboardButton("Confirm", callback_data='confirm'),
+            InlineKeyboardButton("Cancel", callback_data='cancel')
+        ]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+# Start the add_player process
+async def add_player(update: Update, context: CallbackContext):
+    await update.message.reply_text("Please enter the player's first name:", reply_markup=get_cancel_button())
+    context.user_data['state'] = FIRST_NAME  # Set the conversation state to FIRST_NAME
+
+# Handle text input for adding a player
+async def handle_add_player(update: Update, context: CallbackContext):
+    state = context.user_data.get('state')
+
+    if state == FIRST_NAME:
+        context.user_data['first_name'] = update.message.text
+        await update.message.reply_text(
+            f"First Name: {context.user_data['first_name']}\nPlease enter the player's last name:",
+            reply_markup=get_cancel_button()
+        )
+        context.user_data['state'] = LAST_NAME  # Move to LAST_NAME state
+
+    elif state == LAST_NAME:
+        context.user_data['last_name'] = update.message.text
+        await update.message.reply_text(
+            f"First Name: {context.user_data['first_name']}\n"
+            f"Last Name: {context.user_data['last_name']}\n"
+            "Please enter the player's nickname (optional, type 'None' if no nickname):",
+            reply_markup=get_cancel_button()
+        )
+        context.user_data['state'] = NICKNAME  # Move to NICKNAME state
+
+    elif state == NICKNAME:
+        nickname = update.message.text
+        if nickname.lower() == 'none':
+            nickname = None
+        context.user_data['nickname'] = nickname
+
+        # Show confirmation message with inline buttons
+        await update.message.reply_text(
+            f"Please confirm the player details:\n"
+            f"First Name: {context.user_data['first_name']}\n"
+            f"Last Name: {context.user_data['last_name']}\n"
+            f"Nickname: {context.user_data['nickname']}\n",
+            reply_markup=get_confirmation_buttons()
+        )
+        context.user_data['state'] = CONFIRMATION  # Move to CONFIRMATION state
+
+# Start the add_score process
 async def add_score(update: Update, context: CallbackContext):
-    # Create the inline keyboard with players distributed in two columns
-    reply_markup = create_keyboard_with_two_columns(players_all, "select_player_1")
+    await update.message.reply_text("Select Player 1:", reply_markup=get_cancel_button())
+    context.user_data['state'] = PLAYER1  # Set the conversation state to PLAYER1
 
-    # Send or update message for Player 1 selection
-    await update.message.reply_text(
-        "Select Player 1:",
-        reply_markup=reply_markup
-    )
-
-    # Set the context flag for awaiting the score input
-    context.user_data['awaiting_score'] = True
-    context.user_data['selected_players'] = {}  # Initialize a dictionary to store selected players and scores
-
-# Handle button callbacks for player and score selection
+# Handle button callbacks for player selection
 async def button_handler(update: Update, context: CallbackContext):
     query = update.callback_query
     await query.answer()  # Acknowledge the button press
 
-    # Cancel the operation if the user presses the cancel button
     if query.data == "cancel":
-        context.user_data['awaiting_score'] = False
-        context.user_data['selected_players'] = {}
-        await query.edit_message_text("Operation canceled.")
+        await handle_cancel(update, context)
         return
 
-    # Handle Player 1 selection
-    elif query.data.startswith("select_player_1"):
-        player1 = query.data.split(":")[1]
-        context.user_data['selected_players']['player1'] = player1
+    # Player selection logic
+    if context.user_data['state'] == PLAYER1:
+        context.user_data['player1'] = query.data.split(":")[1]
+        context.user_data['state'] = PLAYER2
+        await query.edit_message_text(f"Player 1: {context.user_data['player1']}\nSelect Player 2:", reply_markup=get_cancel_button())
 
-        players_rem = [player for player in players_all if player != player1]
-        # Create new inline buttons for selecting Player 2
-        reply_markup = create_keyboard_with_two_columns(players_rem, "select_player_2")
+    elif context.user_data['state'] == PLAYER2:
+        context.user_data['player2'] = query.data.split(":")[1]
+        context.user_data['state'] = PLAYER3
+        await query.edit_message_text(f"Player 1: {context.user_data['player1']}\nPlayer 2: {context.user_data['player2']}\nSelect Player 3:", reply_markup=get_cancel_button())
 
-        # Update the message for Player 2 selection
-        await query.edit_message_text(
-            f"Player 1: {player1}\nSelect Player 2:",
-            reply_markup=reply_markup
-        )
+    elif context.user_data['state'] == PLAYER3:
+        context.user_data['player3'] = query.data.split(":")[1]
+        context.user_data['state'] = PLAYER4
+        await query.edit_message_text(f"Player 1: {context.user_data['player1']}\nPlayer 2: {context.user_data['player2']}\nPlayer 3: {context.user_data['player3']}\nSelect Player 4:", reply_markup=get_cancel_button())
 
-    # Handle Player 2 selection
-    elif query.data.startswith("select_player_2"):
-        player2 = query.data.split(":")[1]
-        context.user_data['selected_players']['player2'] = player2
+    elif context.user_data['state'] == PLAYER4:
+        context.user_data['player4'] = query.data.split(":")[1]
+        context.user_data['state'] = TEAM1_SCORE
+        await ask_for_team1_score(query)
 
-        players_rem = [player for player in players_all if player not in [
-            context.user_data['selected_players']['player1'],
-            player2
-        ]]
-        # Create new inline buttons for selecting Player 3 (excluding Player 1 and Player 2)
-        reply_markup = create_keyboard_with_two_columns(players_rem, "select_player_3")
+# Ask for Team 1's score
+async def ask_for_team1_score(query):
+    score_buttons = [[InlineKeyboardButton(f"{i}", callback_data=f"team1_score:{i}") for i in range(0, 10)]]
+    score_buttons.append([InlineKeyboardButton("Cancel", callback_data="cancel")])  # Add cancel button
+    reply_markup = InlineKeyboardMarkup(score_buttons)
 
-        # Update the message for Player 3 selection
-        await query.edit_message_text(
-            f"Player 1: {context.user_data['selected_players']['player1']}\n"
-            f"Player 2: {player2}\nSelect Player 3:",
-            reply_markup=reply_markup
-        )
+    await query.edit_message_text(
+        f"Team 1: {query.data['player1']} and {query.data['player2']}\n"
+        f"Team 2: {query.data['player3']} and {query.data['player4']}\n\n"
+        "Select Team 1's score:",
+        reply_markup=reply_markup
+    )
 
-    # Handle Player 3 selection
-    elif query.data.startswith("select_player_3"):
-        player3 = query.data.split(":")[1]
-        context.user_data['selected_players']['player3'] = player3
+# Handle score selection
+async def handle_score_selection(query, context):
+    if context.user_data['state'] == TEAM1_SCORE:
+        context.user_data['team1_score'] = query.data.split(":")[1]
+        context.user_data['state'] = TEAM2_SCORE
+        await ask_for_team2_score(query)
 
-        players_rem = [player for player in players_all if player not in [
-            context.user_data['selected_players']['player1'],
-            context.user_data['selected_players']['player2'],
-            player3
-        ]]
-        # Create new inline buttons for selecting Player 4 (excluding Player 1, Player 2, and Player 3)
-        reply_markup = create_keyboard_with_two_columns(players_rem, "select_player_4")
+    elif context.user_data['state'] == TEAM2_SCORE:
+        context.user_data['team2_score'] = query.data.split(":")[1]
+        await confirm_match_result(query, context)
 
-        # Update the message for Player 4 selection
-        await query.edit_message_text(
-            f"Player 1: {context.user_data['selected_players']['player1']}\n"
-            f"Player 2: {context.user_data['selected_players']['player2']}\n"
-            f"Player 3: {player3}\nSelect Player 4:",
-            reply_markup=reply_markup
-        )
+# Ask for Team 2's score
+async def ask_for_team2_score(query):
+    score_buttons = [[InlineKeyboardButton(f"{i}", callback_data=f"team2_score:{i}") for i in range(0, 10)]]
+    score_buttons.append([InlineKeyboardButton("Cancel", callback_data="cancel")])  # Add cancel button
+    reply_markup = InlineKeyboardMarkup(score_buttons)
 
-    # Handle Player 4 selection
-    elif query.data.startswith("select_player_4"):
-        player4 = query.data.split(":")[1]
-        context.user_data['selected_players']['player4'] = player4
+    await query.edit_message_text(
+        f"Team 1 score: {context.user_data['team1_score']}\n\n"
+        "Select Team 2's score:",
+        reply_markup=reply_markup
+    )
 
-        # Present score options for Team 1
-        score_buttons = [[InlineKeyboardButton(f"{i}", callback_data=f"team1_score:{i}") for i in range(0, 10)]]
-        score_buttons.append([InlineKeyboardButton("Cancel", callback_data="cancel")])  # Add cancel button
-        reply_markup = InlineKeyboardMarkup(score_buttons)
+# Confirm match result
+async def confirm_match_result(query, context):
+    summary_text = (
+        f"Match Summary:\n"
+        f"{context.user_data['player1']} and {context.user_data['player2']}\n"
+        f"vs\n"
+        f"{context.user_data['player3']} and {context.user_data['player4']}\n\n"
+        f"Result: {context.user_data['team1_score']} - {context.user_data['team2_score']}\n\n"
+        "Do you confirm this match result?"
+    )
+    await query.edit_message_text(
+        text=summary_text,
+        reply_markup=get_confirmation_buttons()
+    )
 
-        # Update the message for Team 1 score selection
-        await query.edit_message_text(
-            f"Team 1: {context.user_data['selected_players']['player1']} and "
-            f"{context.user_data['selected_players']['player2']}\n"
-            "\tvs\n"
-            f"Team 2: {context.user_data['selected_players']['player3']} and "
-            f"{player4}\n\n"
-            "Select Team 1's score:",
-            reply_markup=reply_markup
-        )
+# Handle confirmation or cancellation
+async def handle_confirmation(update: Update, context: CallbackContext):
+    query = update.callback_query
+    await query.answer()  # Acknowledge the callback
 
-    # Handle Team 1 score selection
-    elif query.data.startswith("team1_score"):
-        score1 = query.data.split(":")[1]
-        context.user_data['selected_players']['team1_score'] = score1
+    if query.data == 'confirm':
+        if context.user_data.get('state') == CONFIRMATION:  # Confirm adding a player
+            await add_new_player(context)
+        else:  # Confirm match result
+            await add_match_result(context)
 
-        # Present score options for Team 2
-        score_buttons = [[InlineKeyboardButton(f"{i}", callback_data=f"team2_score:{i}") for i in range(0, 10)]]
-        score_buttons.append([InlineKeyboardButton("Cancel", callback_data="cancel")])  # Add cancel button
-        reply_markup = InlineKeyboardMarkup(score_buttons)
+        await query.edit_message_text("Operation completed successfully!")
+        context.user_data.clear()  # Clear user data after operation
 
-        # Update the message for Team 2 score selection
-        await query.edit_message_text(
-            f"Team 1: {context.user_data['selected_players']['player1']} and "
-            f"{context.user_data['selected_players']['player2']}\n"
-            "\tvs\n"
-            f"Team 2: {context.user_data['selected_players']['player3']} and "
-            f"{context.user_data['selected_players']['player4']}\n\n"
-            f"Team 1 score: {score1}\n\n"
-            "Select Team 2's score:",
-            reply_markup=reply_markup
-        )
+    elif query.data == 'cancel':
+        await query.edit_message_text("Operation canceled.")
+        context.user_data.clear()  # Clear user data
 
-    # Handle Team 2 score selection and finalize the match
-    elif query.data.startswith("team2_score"):
-        score2 = query.data.split(":")[1]
+async def add_new_player(context):
+    first_name = context.user_data['first_name']
+    last_name = context.user_data['last_name']
+    nickname = context.user_data['nickname']
+    db.add_player(first_name, last_name, nickname)
 
-        # Check if Team 2's score is the same as Team 1's score
-        if score2 == context.user_data['selected_players']['team1_score']:
+async def add_match_result(context):
+    players = {
+        "player1": context.user_data['player1'],
+        "player2": context.user_data['player2'],
+        "player3": context.user_data['player3'],
+        "player4": context.user_data['player4'],
+        "team1_score": context.user_data['team1_score'],
+        "team2_score": context.user_data['team2_score'],
+    }
+    # Example: db.add_match_result(players)
+    logger.info("Match result added to the database: %s", players)
 
-            # Send an alert popup that the same score can't be selected for both teams
-            await update.callback_query.answer(
-                text="Team 2's score cannot be the same as Team 1's score. Please select a different score.",
-                show_alert=True  # This enables the pop-up dialog
-            )
+# Handle cancellation
+async def handle_cancel(update: Update, context: CallbackContext):
+    query = update.callback_query
+    await query.answer()  # Answer the callback query
+    await query.edit_message_text("Operation canceled.")
+    context.user_data.clear()  # Clear the conversation state
 
-        else:
-            context.user_data['selected_players']['team2_score'] = score2
 
-            # Display the final match summary
-            summary_text = (
-                f"Match Summary:\n"
-                f"{context.user_data['selected_players']['player1']} and "
-                f"{context.user_data['selected_players']['player2']}\n"
-                "\tvs\n"
-                f"{context.user_data['selected_players']['player3']} and "
-                f"{context.user_data['selected_players']['player4']}\n\n"
-                f"Result: {context.user_data['selected_players']['team1_score']} - "
-                f"{score2}\n\n"
-                "Do you confirm this match result?"
-            )
+# List all players in the database
+async def list_players(update: Update, context: CallbackContext):
+    players = db.fetch_players()  # Fetch players from the database
 
-            # Create confirmation buttons (Confirm and Cancel side by side)
-            reply_markup = InlineKeyboardMarkup([
-                [
-                    InlineKeyboardButton("Confirm", callback_data="confirm_match"),
-                    InlineKeyboardButton("Cancel", callback_data="cancel")
-                ]
-            ])
-
-            # Ask for confirmation by updating the message
-            await query.edit_message_text(
-                text=summary_text,
-                reply_markup=reply_markup
-            )
-
-    # Handle match confirmation
-    elif query.data == "confirm_match":
-        # Here you would insert the match result into the database or perform the desired action
-        await query.edit_message_text("Match has been added successfully!")
-
-        # Reset the context after adding the match
-        context.user_data['awaiting_score'] = False
-        context.user_data['selected_players'] = {}
+    if not players:
+        await update.message.reply_text("No players found in the database.")
+    else:
+        logger.info(players)
+        player_list = "\n".join([f"{p[0]} {p[1]} {p[2]} (Nickname: {p[3] if p[3] else 'None'})" for p in players])
+        await update.message.reply_text(f"Current Players:\n{player_list}")

@@ -3,8 +3,8 @@ import logging
 import asyncio
 import nest_asyncio
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, CallbackQueryHandler
-from tg_bot import start, add_score, button_handler
-from database import connect_db
+from tg_bot import start, add_score, button_handler, add_player, handle_add_player, handle_confirmation, handle_cancel, list_players
+from database import create_players_table
 
 # Apply nest_asyncio to allow nested event loops if necessary
 nest_asyncio.apply()
@@ -17,37 +17,39 @@ async def main():
     # Get the Telegram bot token from environment variables
     telegram_token = os.getenv('TELEGRAM_TOKEN')
 
-    # Connect to the database
-    db_connection = await connect_db()
-    if db_connection:
-        logger.info("Connected to the database")
-
     # Create the Application and pass it your bot's token
     application = ApplicationBuilder().token(telegram_token).build()
+
+    # Initialize the SQLite database and create the necessary tables
+    create_players_table()
 
     # Set commands that will show up in the "Menu" button
     await application.bot.set_my_commands([
         ("start", "Start the bot and view options"),
-        ("addplayer", "Add a player (admin only)"),
+        ("ranking", "Request the ranking"),
         ("addscore", "Add a match score"),
-        ("ranking", "Request the raking"),
+        ("addplayer", "Add a player (admin only)"),
+        ("listplayers", "List all players"),
     ])
 
     # Register command handlers
     application.add_handler(CommandHandler('start', start))
-    # application.add_handler(CommandHandler('addplayer', add_player))
+
+    # Handle Add Score command
     application.add_handler(CommandHandler('addscore', add_score))
-    # application.add_handler(CommandHandler('ranking', ranking))
-    # Handles inline button presses
     application.add_handler(CallbackQueryHandler(button_handler))
+
+    # Handle Add Player command
+    application.add_handler(CommandHandler('addplayer', add_player))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_add_player))
+    application.add_handler(CallbackQueryHandler(handle_confirmation))  # Handles inline button presses for confirmation
+    application.add_handler(CallbackQueryHandler(handle_cancel, pattern='cancel'))  # Handles inline button presses for cancellation
+
+    # List players command
+    application.add_handler(CommandHandler('listplayers', list_players))
 
     # Start the bot and keep polling for messages
     await application.run_polling()
-
-    # Ensure to close the database connection when the bot is stopped
-    if db_connection:
-        await db_connection.close()
-        logger.info("Database connection closed")
 
 if __name__ == '__main__':
     asyncio.run(main())
